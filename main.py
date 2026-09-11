@@ -9,8 +9,15 @@ import logging
 import zipfile
 import functools
 import importlib.util
-import psutil
 from datetime import datetime, timedelta
+
+# psutil اختیاری است — اگر نصب نباشد بات کرش نمی‌کند
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
+
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
@@ -22,15 +29,11 @@ from aiogram.client.default import DefaultBotProperties
 # ----------------------------------------------------
 # CONFIGURATION
 # ----------------------------------------------------
-# These are used directly. If a BOT_TOKEN / ADMIN_ID Environment Variable is
-# also set on Railway from an older setup, it is ignored — whatever is
-# written here always wins, so editing this file is always enough.
-DEFAULT_BOT_TOKEN = "8939057909:AAFgnKOTpvLXLcGOumf3h-DI96lWm7ZFtWc"
-DEFAULT_ADMIN_ID = 7831049189
-
-BOT_TOKEN = (DEFAULT_BOT_TOKEN or os.getenv("BOT_TOKEN", "")).strip()
+# توکن و ادمین رو از Environment Variable بخون (Railway)
+# دیگه توکن رو داخل کد نذار!
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 try:
-    ADMIN_ID = int(str(DEFAULT_ADMIN_ID) or os.getenv("ADMIN_ID", "0"))
+    ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 except ValueError:
     ADMIN_ID = 0
 
@@ -58,7 +61,6 @@ if not ADMIN_ID:
 
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="Markdown"))
 dp = Dispatcher(storage=MemoryStorage())
-
 RUNNING_PROCESSES = {}
 
 # ----------------------------------------------------
@@ -89,7 +91,6 @@ def cleanup_stale_state():
             os.remove(DB_FILE)
     except Exception:
         logger.exception("could not remove stale db file")
-
     try:
         for entry in os.listdir(os.getcwd()):
             if entry.startswith("run_") and os.path.isdir(entry):
@@ -174,7 +175,6 @@ async def admin_only_middleware(handler, event: types.Message, data):
 def safe_handler(func):
     """Wrap every handler so that no exception can ever crash the bot or
     leave the user without a response."""
-
     @functools.wraps(func)
     async def wrapper(message: types.Message, *args, **kwargs):
         try:
@@ -188,7 +188,6 @@ def safe_handler(func):
                 )
             except Exception:
                 pass
-
     return wrapper
 
 
@@ -247,10 +246,17 @@ async def show_tutorial(message: types.Message):
 @dp.message(F.text == "🖥 Server Status")
 @safe_handler
 async def server_status(message: types.Message):
+    if not HAS_PSUTIL:
+        await message.answer(
+            "🖥 **Server Status**\n\n"
+            "⚠️ پکیج `psutil` نصب نیست.\n"
+            "برای فعال شدن این بخش، `psutil` را به `requirements.txt` اضافه کنید و دوباره Deploy کنید."
+        )
+        return
+
     cpu = psutil.cpu_percent(interval=1)
     ram = psutil.virtual_memory()
     disk = psutil.disk_usage("/")
-
     status_msg = (
         "🖥 **Detailed Server Status**\n\n"
         f"💻 **CPU Usage:** `{cpu}%`\n"
@@ -406,11 +412,9 @@ def find_missing_python_packages(work_dir):
                 local_names.add(os.path.splitext(f)[0])
         for d in dirs:
             local_names.add(d)
-
     all_modules = set()
     for path in walk_files(work_dir, ".py"):
         all_modules |= extract_py_imports(path)
-
     to_install = []
     for mod in all_modules:
         if not mod or not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", mod):
@@ -423,7 +427,6 @@ def find_missing_python_packages(work_dir):
         except Exception:
             pass
         to_install.append(IMPORT_TO_PIP.get(mod, mod))
-
     return sorted(set(to_install))
 
 
@@ -438,7 +441,6 @@ def find_missing_node_packages(work_dir):
             declared |= set(data.get("devDependencies", {}).keys())
         except Exception:
             logger.debug("could not parse package.json", exc_info=True)
-
     required = set()
     require_re = re.compile(r"require\(\s*['\"]([^./][^'\"]*)['\"]\s*\)")
     import_re = re.compile(r"from\s+['\"]([^./][^'\"]*)['\"]")
@@ -451,7 +453,6 @@ def find_missing_node_packages(work_dir):
                 required.add(pkg)
         except Exception:
             continue
-
     return sorted(required - declared)
 
 
@@ -487,16 +488,13 @@ async def ensure_system_runtime(project_type, status_message: types.Message):
     instead of crashing the bot."""
     if project_type not in SYSTEM_RUNTIME_REQUIREMENTS:
         return True  # python needs nothing extra
-
     check_cmd, apt_packages = SYSTEM_RUNTIME_REQUIREMENTS[project_type]
     if shutil.which(check_cmd):
         return True
-
     await status_message.answer(
         f"⚙️ The {project_type} runtime isn't installed in this container yet — "
         f"attempting to install it automatically..."
     )
-
     for prefix in ([], ["sudo"]):
         code, out = await run_and_log([*prefix, "apt-get", "update"], "/")
         if code == 0:
@@ -504,7 +502,6 @@ async def ensure_system_runtime(project_type, status_message: types.Message):
             if code == 0 and shutil.which(check_cmd):
                 await status_message.answer(f"✅ {project_type} runtime installed successfully.")
                 return True
-
     await status_message.answer(
         f"❌ Couldn't install the {project_type} runtime automatically in this container "
         f"(it may not allow package installation). Python projects are unaffected and will "
@@ -517,7 +514,6 @@ async def install_dependencies(work_dir, project_type, status_message: types.Mes
     """Best-effort dependency installation. Never raises — failures are
     logged and reported, but execution still proceeds afterwards."""
     notes = []
-
     if project_type == "python":
         req_txt = os.path.join(work_dir, "requirements.txt")
         if os.path.exists(req_txt):
@@ -528,7 +524,6 @@ async def install_dependencies(work_dir, project_type, status_message: types.Mes
             )
             if code != 0:
                 notes.append(f"⚠️ Installing requirements.txt failed:\n`{out[-300:]}`")
-
         missing = find_missing_python_packages(work_dir)
         if missing:
             await status_message.answer(
@@ -542,14 +537,12 @@ async def install_dependencies(work_dir, project_type, status_message: types.Mes
             )
             if code != 0:
                 notes.append(f"⚠️ Installing some detected packages failed:\n`{out[-300:]}`")
-
     elif project_type == "node":
         pkg_json = os.path.join(work_dir, "package.json")
         if os.path.exists(pkg_json):
             code, out = await run_and_log(["npm", "install"], work_dir)
             if code != 0:
                 notes.append(f"⚠️ npm install failed:\n`{out[-300:]}`")
-
         missing = find_missing_node_packages(work_dir)
         if missing:
             await status_message.answer(
@@ -559,7 +552,6 @@ async def install_dependencies(work_dir, project_type, status_message: types.Mes
             code, out = await run_and_log(["npm", "install", *missing], work_dir)
             if code != 0:
                 notes.append(f"⚠️ Installing some detected Node.js packages failed:\n`{out[-300:]}`")
-
     for note in notes:
         try:
             await status_message.answer(note)
@@ -570,38 +562,30 @@ async def install_dependencies(work_dir, project_type, status_message: types.Mes
 def build_run_command(entry_path, project_type):
     run_dir = os.path.dirname(entry_path)
     name = os.path.basename(entry_path)
-
     if project_type == "python":
         cmd = [sys.executable, name]
-
     elif project_type == "node":
         cmd = (["npx", "ts-node", name] if name.endswith(".ts") else ["node", name])
-
     elif project_type == "go":
         # List every .go file in the directory as an ad-hoc package so this
         # works for both single-file scripts and multi-file projects, with
         # or without a go.mod.
         go_files = sorted(f for f in os.listdir(run_dir) if f.endswith(".go"))
         cmd = ["go", "run", *go_files] if go_files else ["go", "run", name]
-
     elif project_type == "php":
         cmd = ["php", name]
-
     elif project_type == "java":
         # Compile every .java file in the directory together, then run the
         # class matching the chosen entry file (handles multi-file projects
         # without a package declaration).
         class_name = os.path.splitext(name)[0]
         cmd = ["sh", "-c", f"javac *.java && java {class_name}"]
-
     elif project_type == "rust":
         # rustc follows `mod` declarations from the entry file automatically,
         # so this also covers multi-file rust projects.
         cmd = ["sh", "-c", f"rustc {name} -o app && ./app"]
-
     else:
         cmd = None
-
     return cmd, run_dir
 
 
@@ -622,7 +606,6 @@ async def handle_file(message: types.Message, state: FSMContext):
     file_name = doc.file_name
     ext = os.path.splitext(file_name)[1].lower()
     allowed_exts = [".py", ".js", ".ts", ".go", ".java", ".php", ".rs", ".zip"]
-
     if ext not in allowed_exts:
         await message.answer("❌ Unsupported file extension!")
         return
@@ -630,8 +613,8 @@ async def handle_file(message: types.Message, state: FSMContext):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     work_dir = os.path.join(os.getcwd(), f"run_{message.from_user.id}_{timestamp}")
     os.makedirs(work_dir, exist_ok=True)
-
     file_path = os.path.join(work_dir, file_name)
+
     try:
         await bot.download(doc, destination=file_path)
     except Exception as e:
@@ -656,7 +639,6 @@ async def handle_file(message: types.Message, state: FSMContext):
 
         flatten_single_subdir(work_dir)
         project_type = detect_project_type(work_dir)
-
         if project_type is None:
             shutil.rmtree(work_dir, ignore_errors=True)
             await message.answer("❌ Could not detect the project type inside the ZIP.", reply_markup=get_main_keyboard())
@@ -665,7 +647,6 @@ async def handle_file(message: types.Message, state: FSMContext):
 
         candidates, suffixes = ENTRY_CONFIG[project_type]
         found = find_entry_file(work_dir, candidates, suffixes)
-
         if isinstance(found, list):
             # Multiple files, no clear single entry point — let the user choose.
             rel_choices = [os.path.relpath(p, work_dir) for p in found[:20]]
@@ -681,7 +662,6 @@ async def handle_file(message: types.Message, state: FSMContext):
             )
             return
         entry_path = found
-
         if not entry_path:
             shutil.rmtree(work_dir, ignore_errors=True)
             await message.answer("❌ No runnable file was found inside the ZIP.", reply_markup=get_main_keyboard())
@@ -710,7 +690,6 @@ async def entry_choice_selected(message: types.Message, state: FSMContext):
     if message.text not in choices:
         await message.answer("❌ Please choose one of the options shown.")
         return
-
     work_dir = data["work_dir"]
     entry_path = os.path.join(work_dir, message.text)
     await state.update_data(entry_path=entry_path, file_name=os.path.basename(entry_path))
@@ -766,9 +745,7 @@ async def run_project_final(message: types.Message, state: FSMContext):
     try:
         process = await asyncio.create_subprocess_exec(*cmd, cwd=run_dir)
         pid = process.pid
-
         task = asyncio.create_task(auto_stop_project(pid, duration_seconds, file_name, work_dir))
-
         RUNNING_PROCESSES[pid] = {
             "process": process,
             "file_name": file_name,
@@ -778,7 +755,6 @@ async def run_project_final(message: types.Message, state: FSMContext):
             "task": task,
         }
         save_db()
-
         await message.answer(
             f"🚀 **Project is now Running!**\n\n"
             f"📄 **Name:** `{file_name}`\n"
@@ -789,7 +765,6 @@ async def run_project_final(message: types.Message, state: FSMContext):
     except Exception as e:
         shutil.rmtree(work_dir, ignore_errors=True)
         await message.answer(f"❌ Execution Error: `{str(e)[:300]}`", reply_markup=get_main_keyboard())
-
     await state.clear()
 
 
@@ -805,11 +780,9 @@ async def auto_stop_project(pid, delay, file_name, work_dir):
             await p_info["process"].wait()
         except Exception:
             pass
-
         shutil.rmtree(work_dir, ignore_errors=True)
         del RUNNING_PROCESSES[pid]
         save_db()
-
         try:
             await bot.send_message(
                 ADMIN_ID, f"⏰ **Time Expired!** Project `{file_name}` (PID: `{pid}`) was automatically stopped."
@@ -849,7 +822,6 @@ async def select_project(message: types.Message, state: FSMContext):
     except ValueError:
         await message.answer("❌ Invalid ID.")
         return
-
     if pid not in RUNNING_PROCESSES:
         await message.answer("❌ Project not found.")
         await state.clear()
@@ -857,7 +829,6 @@ async def select_project(message: types.Message, state: FSMContext):
 
     await state.update_data(selected_pid=pid)
     await state.set_state(ProjectManageState.waiting_for_action)
-
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
             [kbtn("🛑 Stop & Delete", "danger")],
@@ -874,7 +845,6 @@ async def select_project(message: types.Message, state: FSMContext):
 async def stop_project_action(message: types.Message, state: FSMContext):
     data = await state.get_data()
     pid = data.get("selected_pid")
-
     if pid in RUNNING_PROCESSES:
         p_info = RUNNING_PROCESSES[pid]
         p_info["task"].cancel()
@@ -886,7 +856,6 @@ async def stop_project_action(message: types.Message, state: FSMContext):
         del RUNNING_PROCESSES[pid]
         save_db()
         await message.answer(f"✅ PID `{pid}` stopped.", reply_markup=get_main_keyboard())
-
     await state.clear()
 
 
@@ -903,11 +872,9 @@ async def extend_time_action(message: types.Message, state: FSMContext):
     if not message.text.isdigit() or int(message.text) <= 0:
         await message.answer("❌ Enter a valid number.")
         return
-
     extra_hours = int(message.text)
     data = await state.get_data()
     pid = data.get("selected_pid")
-
     if pid in RUNNING_PROCESSES:
         p_info = RUNNING_PROCESSES[pid]
         p_info["end_time"] += timedelta(hours=extra_hours)
@@ -921,7 +888,6 @@ async def extend_time_action(message: types.Message, state: FSMContext):
             f"✅ Extended! Expiry: `{p_info['end_time'].strftime('%Y-%m-%d %H:%M:%S')}`",
             reply_markup=get_main_keyboard(),
         )
-
     await state.clear()
 
 
@@ -943,7 +909,6 @@ async def fallback_handler(message: types.Message, state: FSMContext):
 async def main():
     cleanup_stale_state()
     logger.info("Runner bot starting...")
-
     try:
         me = await bot.get_me()
         logger.info("Authenticated as @%s (id=%s)", me.username, me.id)
@@ -954,7 +919,6 @@ async def main():
             "regenerated/revoked in BotFather."
         )
         return
-
     try:
         # A webhook left over from an earlier setup silently blocks getUpdates
         # (polling) with no visible error — always clear it before polling.
