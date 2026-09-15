@@ -29,8 +29,9 @@ from aiogram.client.default import DefaultBotProperties
 #   ADMIN_ID  = your numeric telegram user id
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
+_admin_raw = os.getenv("ADMIN_ID", "").strip()
 try:
-    ADMIN_ID = int(os.getenv("ADMIN_ID", "0").strip() or "0")
+    ADMIN_ID = int(_admin_raw) if _admin_raw else 0
 except ValueError:
     ADMIN_ID = 7831049189
 
