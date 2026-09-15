@@ -27,7 +27,7 @@ from aiogram.client.default import DefaultBotProperties
 # ADMIN_ID is read from env with a hardcoded fallback, so the bot
 # always starts even if the env var is missing.
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-DEFAULT_ADMIN_ID = 8848280840
+DEFAULT_ADMIN_ID = 7831049189
 
 _admin_raw = os.getenv("ADMIN_ID", "").strip()
 if _admin_raw:
