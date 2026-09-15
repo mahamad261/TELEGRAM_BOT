@@ -23,17 +23,22 @@ from aiogram.client.default import DefaultBotProperties
 # ----------------------------------------------------
 # CONFIGURATION
 # ----------------------------------------------------
-# Token and admin ID are read ONLY from environment variables.
-# Set them in Railway (or your server) as:
-#   BOT_TOKEN = your bot token
-#   ADMIN_ID  = your numeric telegram user id
+# BOT_TOKEN is read ONLY from environment variables (secure).
+# ADMIN_ID is read from environment variables, with a hardcoded fallback
+# so the bot never refuses to start if the env var is missing.
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
+DEFAULT_ADMIN_ID = 8848280840
+
 _admin_raw = os.getenv("ADMIN_ID", "").strip()
-try:
-    ADMIN_ID = int(_admin_raw) if _admin_raw else 0
-except ValueError:
-    ADMIN_ID = 8848280840
+if _admin_raw:
+    try:
+        ADMIN_ID = int(_admin_raw)
+    except ValueError:
+        logger_msg = f"ADMIN_ID env var is not a valid integer: {_admin_raw!r}"
+        ADMIN_ID = DEFAULT_ADMIN_ID
+else:
+    ADMIN_ID = DEFAULT_ADMIN_ID
 
 DB_FILE = "running_db.json"
 
@@ -56,6 +61,8 @@ if not ADMIN_ID:
         "ADMIN_ID (your numeric Telegram user ID)."
     )
     sys.exit(1)
+
+logger.info("Using ADMIN_ID = %s", ADMIN_ID)
 
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="Markdown"))
 dp = Dispatcher(storage=MemoryStorage())
@@ -877,103 +884,4 @@ async def stop_project_action(message: types.Message, state: FSMContext):
     pid = data.get("selected_pid")
 
     if pid in RUNNING_PROCESSES:
-        p_info = RUNNING_PROCESSES[pid]
-        p_info["task"].cancel()
-        try:
-            p_info["process"].terminate()
-        except Exception:
-            pass
-        shutil.rmtree(p_info["work_dir"], ignore_errors=True)
-        del RUNNING_PROCESSES[pid]
-        save_db()
-        await message.answer(f"✅ PID `{pid}` stopped.", reply_markup=get_main_keyboard())
-
-    await state.clear()
-
-
-@dp.message(ProjectManageState.waiting_for_action, F.text == "➕ Extend Time")
-@safe_handler
-async def extend_time_prompt(message: types.Message, state: FSMContext):
-    await state.set_state(ProjectManageState.waiting_for_extend_time)
-    await message.answer("⌛ Enter extra hours to add:", reply_markup=get_cancel_keyboard())
-
-
-@dp.message(ProjectManageState.waiting_for_extend_time)
-@safe_handler
-async def extend_time_action(message: types.Message, state: FSMContext):
-    if not message.text.isdigit() or int(message.text) <= 0:
-        await message.answer("❌ Enter a valid number.")
-        return
-
-    extra_hours = int(message.text)
-    data = await state.get_data()
-    pid = data.get("selected_pid")
-
-    if pid in RUNNING_PROCESSES:
-        p_info = RUNNING_PROCESSES[pid]
-        p_info["end_time"] += timedelta(hours=extra_hours)
-        p_info["task"].cancel()
-        rem_seconds = (p_info["end_time"] - datetime.now()).total_seconds()
-        p_info["task"] = asyncio.create_task(
-            auto_stop_project(pid, rem_seconds, p_info["file_name"], p_info["work_dir"])
-        )
-        save_db()
-        await message.answer(
-            f"✅ Extended! Expiry: `{p_info['end_time'].strftime('%Y-%m-%d %H:%M:%S')}`",
-            reply_markup=get_main_keyboard(),
-        )
-
-    await state.clear()
-
-
-# ----------------------------------------------------
-# FALLBACK (must stay last — only catches messages no other handler matched)
-# ----------------------------------------------------
-@dp.message()
-@safe_handler
-async def fallback_handler(message: types.Message, state: FSMContext):
-    await message.answer(
-        "🤔 I didn't recognize that. Tap /start or use the menu buttons below.",
-        reply_markup=get_main_keyboard(),
-    )
-
-
-# ----------------------------------------------------
-# MAIN EXECUTION
-# ----------------------------------------------------
-async def main():
-    cleanup_stale_state()
-    logger.info("Runner bot starting...")
-
-    try:
-        me = await bot.get_me()
-        logger.info("Authenticated as @%s (id=%s)", me.username, me.id)
-    except Exception:
-        logger.critical(
-            "Could not authenticate with Telegram using the configured BOT_TOKEN. "
-            "Double-check that the token in the source file is correct and was not "
-            "regenerated/revoked in BotFather."
-        )
-        return
-
-    try:
-        # A webhook left over from an earlier setup silently blocks getUpdates
-        # (polling) with no visible error — always clear it before polling.
-        await bot.delete_webhook(drop_pending_updates=True)
-    except Exception:
-        logger.exception("delete_webhook failed (continuing anyway)")
-
-    while True:
-        try:
-            await dp.start_polling(bot)
-            break
-        except Exception:
-            logger.exception("Polling crashed — restarting in 5 seconds")
-            await asyncio.sleep(5)
-
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        pass
+        p_info = RUNNING_PROCESSES
