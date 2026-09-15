@@ -23,15 +23,14 @@ from aiogram.client.default import DefaultBotProperties
 # ----------------------------------------------------
 # CONFIGURATION
 # ----------------------------------------------------
-# These are used directly. If a BOT_TOKEN / ADMIN_ID Environment Variable is
-# also set on Railway from an older setup, it is ignored — whatever is
-# written here always wins, so editing this file is always enough.
-DEFAULT_BOT_TOKEN = "8704276802:AAHXjga4cQxNVpPOCTupNnmV-70_OObinQg"
-DEFAULT_ADMIN_ID = 7831049189
+# Token and admin ID are read ONLY from environment variables.
+# Set them in Railway (or your server) as:
+#   BOT_TOKEN = your bot token
+#   ADMIN_ID  = your numeric telegram user id
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
-BOT_TOKEN = (DEFAULT_BOT_TOKEN or os.getenv("BOT_TOKEN", "")).strip()
 try:
-    ADMIN_ID = int(str(DEFAULT_ADMIN_ID) or os.getenv("ADMIN_ID", "0"))
+    ADMIN_ID = int(os.getenv("ADMIN_ID", "0").strip() or "0")
 except ValueError:
     ADMIN_ID = 0
 
