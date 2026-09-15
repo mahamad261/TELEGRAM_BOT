@@ -33,7 +33,7 @@ _admin_raw = os.getenv("ADMIN_ID", "").strip()
 try:
     ADMIN_ID = int(_admin_raw) if _admin_raw else 0
 except ValueError:
-    ADMIN_ID = 7831049189
+    ADMIN_ID = 8848280840
 
 DB_FILE = "running_db.json"
 
